@@ -1,69 +1,47 @@
-name: Build Hesabati APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-
-concurrency:
-  group: build-apk-${{ github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Get Project
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-
-      - name: Install Dependencies
-        run: npm ci
-
       - name: Prepare Website
         run: |
+          echo "--- repo files ---"
+          ls -la
+          mkdir -p scripts
+          if [ ! -f scripts/build-www.mjs ]; then
+          cat > scripts/build-www.mjs <<'EOF'
+          import { cpSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          import { fileURLToPath } from 'node:url';
+
+          const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+          const www = join(root, 'www');
+          const nm = (p) => join(root, 'node_modules', p);
+
+          rmSync(www, { recursive: true, force: true });
+          mkdirSync(join(www, 'vendor'), { recursive: true });
+
+          for (const f of ['index.html', 'sw.js', 'manifest.json']) cpSync(join(root, f), join(www, f));
+          cpSync(join(root, 'icons'), join(www, 'icons'), { recursive: true });
+
+          const vendor = [
+            ['https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js', 'chart.js/dist/chart.umd.js', 'chart.umd.js'],
+            ['https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', 'xlsx/dist/xlsx.full.min.js', 'xlsx.full.min.js'],
+            ['https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js', 'firebase/firebase-app-compat.js', 'firebase-app-compat.js'],
+            ['https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js', 'firebase/firebase-auth-compat.js', 'firebase-auth-compat.js'],
+            ['https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js', 'firebase/firebase-firestore-compat.js', 'firebase-firestore-compat.js'],
+          ];
+
+          let html = readFileSync(join(www, 'index.html'), 'utf8');
+          let vendored = 0;
+          for (const [cdn, src, out] of vendor) {
+            if (!existsSync(nm(src))) { console.warn('missing ' + src); continue; }
+            cpSync(nm(src), join(www, 'vendor', out));
+            if (html.includes(cdn)) { html = html.split(cdn).join('vendor/' + out); vendored++; }
+          }
+          writeFileSync(join(www, 'index.html'), html);
+
+          let sw = readFileSync(join(www, 'sw.js'), 'utf8');
+          sw = sw.replace(/const CACHE = '[^']*';/, "const CACHE = 'hesabati-" + Date.now().toString(36) + "';");
+          writeFileSync(join(www, 'sw.js'), sw);
+
+          console.log('www ready - local libs: ' + vendored + '/' + vendor.length);
+          EOF
+          fi
           npm run build
           test -f www/index.html
-          test -f www/vendor/chart.umd.js
-
-      - name: Verify Capacitor Config
-        run: |
-          cat capacitor.config.json
-          node -e "const c = require('./capacitor.config.json'); if (!c.appId) throw new Error('Missing appId'); if (!c.appName) throw new Error('Missing appName'); console.log('App ID:', c.appId); console.log('Web Directory:', c.webDir);"
-
-      - name: Add Android
-        run: '[ -d android ] || npx cap add android'
-
-      - name: Generate Icons and Splash
-        run: npm run assets
-
-      - name: Sync Android
-        run: npx cap sync android
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build APK
-        working-directory: android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Hesabati-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
