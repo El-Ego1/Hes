@@ -1,0 +1,69 @@
+name: Build Hesabati APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get Project
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Prepare Website
+        run: |
+          npm run build
+          test -f www/index.html
+          test -f www/vendor/chart.umd.js
+
+      - name: Verify Capacitor Config
+        run: |
+          cat capacitor.config.json
+          node -e "const c = require('./capacitor.config.json'); if (!c.appId) throw new Error('Missing appId'); if (!c.appName) throw new Error('Missing appName'); console.log('App ID:', c.appId); console.log('Web Directory:', c.webDir);"
+
+      - name: Add Android
+        run: '[ -d android ] || npx cap add android'
+
+      - name: Generate Icons and Splash
+        run: npm run assets
+
+      - name: Sync Android
+        run: npx cap sync android
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hesabati-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
