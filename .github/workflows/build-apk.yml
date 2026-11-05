@@ -35,11 +35,14 @@ jobs:
           for f in index.html sw.js manifest.json capacitor.config.json; do
             test -f "$f" || { echo "::error::الملف $f مش موجود في جذر الريبو"; exit 1; }
           done
-          test -d icons || { echo "::error::فولدر icons مش موجود في جذر الريبو"; exit 1; }
           rm -rf www
           mkdir -p www/vendor
           cp index.html sw.js manifest.json www/
-          cp -r icons www/icons
+          if [ -d icons ]; then
+            cp -r icons www/icons
+          else
+            echo "::warning::فولدر icons مش موجود في الريبو - ارفعه بالسحب والإفلات"
+          fi
           copy_lib() {
             if [ -f "node_modules/$2" ]; then
               cp "node_modules/$2" "www/vendor/$3"
